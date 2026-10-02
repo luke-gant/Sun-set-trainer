@@ -1,6 +1,3 @@
-## website for getting sun set
-## https://timelapse.weatherstem.com/timelapses/daily/2748/2026/08/02/daily_timelapse.mp4
-##                                                      change this ^ to change the day
 date,sunset_time_pdt,sunset_score_1_to_10,eugene_cloud_cover_pct,eugene_cloud_low_pct,eugene_cloud_mid_pct,eugene_cloud_high_pct,eugene_humidity_pct,eugene_visibility_m,eugene_precipitation_mm,coast_gap_cloud_cover_pct,coast_gap_cloud_low_pct,coast_gap_cloud_mid_pct,coast_gap_cloud_high_pct,coast_gap_humidity_pct,coast_gap_visibility_m,coast_gap_precipitation_mm
 2026-06-24,20:59,6,0.0,0.0,0.0,0.0,29.0,,0.0,45.0,11.0,0.0,38.0,72.0,,0.0
 2026-06-25,20:59,0,100.0,47.0,100.0,98.0,85.0,,2.3,100.0,100.0,100.0,98.0,98.0,,1.7
