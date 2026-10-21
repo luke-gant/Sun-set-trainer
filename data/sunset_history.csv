@@ -1,4 +1,4 @@
-date,sunset_hour,low_clouds,mid_clouds,high_clouds,west_low_clouds,humidity,precip_prob,visibility_km,heuristic_score,actual_label
+date,sunset_hour,low_clouds,mid_clouds,high_clouds,west_low_clouds,humidity,precip_prob,visibility_km,heuristic_score,actual_score
 2026-10-08,18,0,0,0,2,59,0,15.0,70,
 2026-10-09,18,0,0,45,3,55,0,15.0,100,
 2026-10-10,18,16,21,0,5,63,0,15.0,100,
