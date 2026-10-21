@@ -32,6 +32,7 @@ west_params = {
 }
 
 try:
+    # 1. Fetch atmospheric parameters
     res = requests.get(url, params=corvallis_params, timeout=15)
     res.raise_for_status()
     data = res.json()
@@ -53,21 +54,22 @@ try:
     visibility_km = round(data["hourly"]["visibility"][sunset_hour] / 1000, 1)
     west_low_clouds = data_west["hourly"]["cloud_cover_low"][sunset_hour]
 
-    # Heuristic scoring
-    quality_score = 0
+    # Baseline heuristic scaled 1 to 5
+    quality_score = 1.0
     if precip_prob <= 40 and west_low_clouds <= 65:
+        sub_score = 0
         if low_clouds <= 35:
-            quality_score += 30
+            sub_score += 1.2
         if west_low_clouds <= 30:
-            quality_score += 20
+            sub_score += 0.8
         upper_canvas = max(mid_clouds, high_clouds)
         if 20 <= upper_canvas <= 80:
-            quality_score += 30
+            sub_score += 1.2
         if humidity <= 75 and visibility_km >= 12:
-            quality_score += 20
-        quality_score = max(0, min(quality_score, 100))
+            sub_score += 0.8
+        quality_score = round(min(5.0, 1.0 + sub_score), 1)
 
-    # Append row to CSV
+    # 2. Append row to CSV
     Path("data").mkdir(exist_ok=True)
     csv_path = Path("data/sunset_history.csv")
 
@@ -82,7 +84,7 @@ try:
         "precip_prob": precip_prob,
         "visibility_km": visibility_km,
         "heuristic_score": quality_score,
-        "actual_label": "",
+        "actual_score": "",  # Store rating 1-5 here
     }
 
     if csv_path.exists():
@@ -93,17 +95,18 @@ try:
     else:
         pd.DataFrame([new_row]).to_csv(csv_path, index=False)
 
-    print(f"Logged atmospheric data for {date_str}. Score: {quality_score}/100")
+    print(f"Logged atmospheric data for {date_str}. Heuristic: {quality_score}/5.0")
 
-    # Lowered alert threshold to 35
-    if quality_score >= 35:
+    # Lowered alert threshold to 2.0 to capture most evenings
+    if quality_score >= 2.0:
         message = (
             f"🌅 *Sunset Check ({date_str})*\n"
             f"Sunset Time: *{sunset_dt.strftime('%I:%M %p')}*\n"
-            f"Score: *{quality_score}/100*\n\n"
+            f"Heuristic Rating: *{quality_score} / 5.0*\n\n"
             f"☁️ *Clouds:* L {low_clouds}% | M {mid_clouds}% | H {high_clouds}%\n"
-            f"🌄 *West Corridor:* {west_low_clouds}% | 💧 {humidity}%\n\n"
-            f"_Was tonight's sunset worth seeing?_"
+            f"🌄 *West Corridor:* {west_low_clouds}% low deck\n"
+            f"💧 *Humidity:* {humidity}% | 👁️ *Vis:* {visibility_km} km\n\n"
+            f"_Score tonight's sunset (1-5):_"
         )
 
         payload = {
@@ -113,14 +116,11 @@ try:
             "reply_markup": {
                 "inline_keyboard": [
                     [
-                        {
-                            "text": "🔥 Epic (1)",
-                            "callback_data": f"label:{date_str}:1",
-                        },
-                        {
-                            "text": "☁️ Dull / Flat (0)",
-                            "callback_data": f"label:{date_str}:0",
-                        },
+                        {"text": "1 ☁️", "callback_data": f"rate:{date_str}:1"},
+                        {"text": "2 🌫️", "callback_data": f"rate:{date_str}:2"},
+                        {"text": "3 🌤️", "callback_data": f"rate:{date_str}:3"},
+                        {"text": "4 🌇", "callback_data": f"rate:{date_str}:4"},
+                        {"text": "5 🔥", "callback_data": f"rate:{date_str}:5"},
                     ]
                 ]
             },
@@ -128,7 +128,10 @@ try:
 
         t_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         requests.post(t_url, json=payload, timeout=15)
-        print("Telegram notification dispatched.")
+        print("Telegram notification dispatched with 1-5 scale buttons.")
+
+except Exception as e:
+    sys.exit(f"Run failed: {e}")
 
 except Exception as e:
     sys.exit(f"Run failed: {e}")
