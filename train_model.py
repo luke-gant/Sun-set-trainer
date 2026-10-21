@@ -1,46 +1,46 @@
 import joblib
-import numpy as np
 import pandas as pd
-from sklearn.model_selection import KFold, cross_val_score
-from sklearn.neural_network import MLPRegressor
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.model_selection import train_test_split
 
-CSV_PATH = "eugene_sunset_last_100_days.csv"
-MODEL_PATH = "sunset_model.joblib"
+df = pd.read_csv("data/sunset_history.csv")
 
-df = pd.read_csv(CSV_PATH)
+# Filter only days you manually scored 1-5
+df = df.dropna(subset=["actual_score"])
+df = df[df["actual_score"] != ""]
+df["actual_score"] = df["actual_score"].astype(float)
 
-# Keep only rows where you entered a score
-df_clean = df.dropna(subset=["sunset_score_1_to_10"]).copy()
-df_clean = df_clean[df_clean["sunset_score_1_to_10"].astype(str).str.strip() != ""]
+if len(df) < 15:
+    print(f"Need at least 15 scored days to train. Currently have: {len(df)}")
+    exit()
 
-if len(df_clean) < 15:
-    raise ValueError(f"Need at least 15 scored days to train reliably. Found {len(df_clean)}.")
+features = [
+    "low_clouds",
+    "mid_clouds",
+    "high_clouds",
+    "west_low_clouds",
+    "humidity",
+    "precip_prob",
+    "visibility_km",
+]
+X = df[features]
+y = df["actual_score"]
 
-feature_cols = [c for c in df_clean.columns if c.startswith("eugene_") or c.startswith("coast_gap_")]
-X = df_clean[feature_cols].astype(float)
-y = df_clean["sunset_score_1_to_10"].astype(float)
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+model = RandomForestRegressor(n_estimators=100, max_depth=4, random_state=42)
+model.fit(X_train, y_train)
 
-# Neural network pipeline with standardization and L2 regularization (alpha=0.05) to avoid overfitting small sample sizes
-pipeline = Pipeline([
-    ("scaler", StandardScaler()),
-    ("mlp", MLPRegressor(
-        hidden_layer_sizes=(16, 8),
-        activation="relu",
-        solver="adam",
-        alpha=0.05,
-        max_iter=1000,
-        random_state=42
-    ))
-])
+if len(X_test) > 0:
+    preds = model.predict(X_test)
+    print(f"Mean Absolute Error: {mean_absolute_error(y_test, preds):.2f} stars")
+    print(f"R² Score: {r2_score(y_test, preds):.2f}")
 
-# 5-fold cross validation score
-cv = KFold(n_splits=min(5, len(df_clean)), shuffle=True, random_state=42)
-scores = cross_val_score(pipeline, X, y, cv=cv, scoring="neg_root_mean_squared_error")
-print(f"Average RMSE across folds: {-scores.mean():.2f} rating points")
+print("\n--- Learned Feature Weights ---")
+for feat, imp in zip(features, model.feature_importances_):
+    print(f"{feat:18s}: {imp * 100:.1f}%")
 
-# Train final model on full rated dataset
-pipeline.fit(X, y)
-joblib.dump(pipeline, MODEL_PATH)
-print(f"Model saved to {MODEL_PATH} based on {len(df_clean)} scored days.")
+joblib.dump(model, "models/sunset_model.joblib")
+print("\nSaved regressor model to models/sunset_model.joblib")
