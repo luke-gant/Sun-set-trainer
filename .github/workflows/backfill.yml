@@ -21,12 +21,12 @@ jobs:
       - name: Install dependencies
         run: pip install requests pandas
 
-      - name: Run Corvallis Backfill
-        run: python backfill_corvallis.py
+      - name: Run Upgrade Script
+        run: python upgrade_dataset.py
 
       - name: Commit backfilled CSV
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add data/sunset_history.csv
-          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: backfill corvallis sunset history [skip ci]" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: upgrade sunset dataset with enhanced metrics [skip ci]" && git push)
