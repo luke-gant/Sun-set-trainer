@@ -22,7 +22,8 @@ corv_params = {
         "cloud_cover_low,cloud_cover_mid,cloud_cover_high,"
         "relative_humidity_2m,temperature_2m,dew_point_2m,"
         "direct_normal_irradiance,diffuse_radiation,"
-        "surface_pressure,wind_speed_10m,wind_direction_10m,visibility"
+        "surface_pressure,wind_speed_10m,wind_direction_10m,"
+        "precipitation,visibility"  # Added precipitation
     ),
     "daily": "sunset",
     "timezone": TIMEZONE,
@@ -54,35 +55,40 @@ try:
     date_str = sunset_dt.strftime("%Y-%m-%d")
 
     # Cloud decks
-    low = data["hourly"]["cloud_cover_low"][sunset_hour]
-    mid = data["hourly"]["cloud_cover_mid"][sunset_hour]
-    high = data["hourly"]["cloud_cover_high"][sunset_hour]
+    low = int(data["hourly"]["cloud_cover_low"][sunset_hour] or 0)
+    mid = int(data["hourly"]["cloud_cover_mid"][sunset_hour] or 0)
+    high = int(data["hourly"]["cloud_cover_high"][sunset_hour] or 0)
 
     # Temperatures & Moisture
-    temp = data["hourly"]["temperature_2m"][sunset_hour]
-    dew_point = data["hourly"]["dew_point_2m"][sunset_hour]
+    temp = round(float(data["hourly"]["temperature_2m"][sunset_hour] or 0.0), 1)
+    dew_point = round(float(data["hourly"]["dew_point_2m"][sunset_hour] or 0.0), 1)
     dew_point_depression = round(temp - dew_point, 1)
-    humidity = data["hourly"]["relative_humidity_2m"][sunset_hour]
+    humidity = int(data["hourly"]["relative_humidity_2m"][sunset_hour] or 0)
+
+    # Precipitation
+    raw_precip = data["hourly"]["precipitation"][sunset_hour]
+    precip_mm = round(float(raw_precip), 1) if raw_precip is not None else 0.0
 
     # Solar Radiation (W/m^2)
-    dni = round(data["hourly"]["direct_normal_irradiance"][sunset_hour], 1)
-    diffuse = round(data["hourly"]["diffuse_radiation"][sunset_hour], 1)
+    dni = round(float(data["hourly"]["direct_normal_irradiance"][sunset_hour] or 0.0), 1)
+    diffuse = round(float(data["hourly"]["diffuse_radiation"][sunset_hour] or 0.0), 1)
 
-    # Dynamics & Horizon
-    pressure = data["hourly"]["surface_pressure"][sunset_hour]
-    wind_spd = data["hourly"]["wind_speed_10m"][sunset_hour]
-    wind_dir = data["hourly"]["wind_direction_10m"][sunset_hour]
-    vis_km = round(data["hourly"]["visibility"][sunset_hour] / 1000, 1)
+    # Dynamics & Visibility
+    pressure = round(float(data["hourly"]["surface_pressure"][sunset_hour] or 0.0), 1)
+    wind_spd = round(float(data["hourly"]["wind_speed_10m"][sunset_hour] or 0.0), 1)
+    wind_dir = int(data["hourly"]["wind_direction_10m"][sunset_hour] or 0)
+    raw_vis = data["hourly"]["visibility"][sunset_hour]
+    vis_km = round(float(raw_vis) / 1000.0, 1) if raw_vis is not None else 15.0
 
-    west_low = data_west["hourly"]["cloud_cover_low"][sunset_hour]
-    west_prev = data_west["hourly"]["cloud_cover_low"][prev_hour]
+    # Horizon Vector & Trend
+    west_low = int(data_west["hourly"]["cloud_cover_low"][sunset_hour] or 0)
+    west_prev = int(data_west["hourly"]["cloud_cover_low"][prev_hour] or 0)
     west_trend = west_low - west_prev
 
-    # 2. Refined Heuristic Score (1.0 to 5.0) incorporating DNI and moisture
+    # 2. Heuristic Score (1.0 to 5.0) matching backfill rules
     h_score = 1.0
 
-    # Western corridor openness
-    if west_low <= 65:
+    if west_low <= 65 and precip_mm <= 0.1:
         if low <= 30:
             h_score += 0.8
         if west_low <= 25:
@@ -97,8 +103,8 @@ try:
         if dni >= 50:
             h_score += 0.5
 
-        # Atmospheric clarity (dew point depression and visibility)
-        if dew_point_depression >= 3.0 and vis_km >= 15:
+        # Atmospheric clarity
+        if dew_point_depression >= 3.0:
             h_score += 0.4
 
         # Clearing horizon bonus
@@ -107,7 +113,7 @@ try:
 
     h_score = round(min(5.0, h_score), 1)
 
-    # 3. Append to CSV
+    # 3. Append to CSV with exact 20-column schema order
     Path("data").mkdir(exist_ok=True)
     csv_path = Path("data/sunset_history.csv")
 
@@ -128,9 +134,10 @@ try:
         "surface_pressure_hpa": pressure,
         "wind_speed_kmh": wind_spd,
         "wind_dir_deg": wind_dir,
-        "visibility_km": vis_km,
+        "precipitation_mm": precip_mm,
         "heuristic_score": h_score,
         "actual_score": "",
+        "visibility_km": vis_km,
     }
 
     if csv_path.exists():
@@ -154,7 +161,7 @@ try:
             f"☁️ *Clouds:* L {low}% | M {mid}% | H {high}%\n"
             f"🌄 *Coast Range:* {west_low}% ({trend_str})\n"
             f"☀️ *DNI:* {dni} W/m² | 🌫️ *Spread:* {dew_point_depression}°C ({haze_str})\n"
-            f"💧 *Humidity:* {humidity}% | 👁️ *Vis:* {vis_km} km\n\n"
+            f"💧 *Humidity:* {humidity}% | 🌧️ *Precip:* {precip_mm} mm | 👁️ *Vis:* {vis_km} km\n\n"
             f"_Score tonight's sunset (1-5):_"
         )
 
