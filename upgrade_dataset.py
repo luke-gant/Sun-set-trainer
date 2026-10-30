@@ -1,4 +1,5 @@
 from pathlib import Path
+import numpy as np
 import pandas as pd
 import requests
 
@@ -13,17 +14,20 @@ if not csv_path.exists():
 
 existing_df = pd.read_csv(csv_path)
 
-# Retain all manual scores you already recorded
-score_lookup = dict(
-    zip(existing_df["date"].astype(str), existing_df["actual_score"])
-)
+# Retain all manual scores you already recorded (ignoring NaN)
+score_lookup = {}
+if "actual_score" in existing_df.columns:
+    valid_scores = existing_df.dropna(subset=["actual_score"])
+    score_lookup = dict(
+        zip(valid_scores["date"].astype(str), valid_scores["actual_score"])
+    )
 
 start_date = str(existing_df["date"].min())
 end_date = str(existing_df["date"].max())
 
 print(f"Re-fetching enhanced archive metrics for {start_date} to {end_date}...")
 
-# Archive API supported variables (including radiation and dew point)
+# 1. Fetch Corvallis archive (NOW INCLUDES VISIBILITY)
 corv_params = {
     "latitude": CORVALLIS_LAT,
     "longitude": CORVALLIS_LON,
@@ -33,7 +37,8 @@ corv_params = {
         "cloud_cover_low,cloud_cover_mid,cloud_cover_high,"
         "temperature_2m,dew_point_2m,relative_humidity_2m,"
         "direct_normal_irradiance,diffuse_radiation,"
-        "surface_pressure,wind_speed_10m,wind_direction_10m,precipitation"
+        "surface_pressure,wind_speed_10m,wind_direction_10m,"
+        "precipitation,visibility"
     ),
     "daily": "sunset",
     "timezone": TIMEZONE,
@@ -48,13 +53,11 @@ west_params = {
     "timezone": TIMEZONE,
 }
 
-# 1. Fetch Corvallis archive
-res_corv = requests.get(ARCHIVE_URL, params=corv_params, timeout=20)
+res_corv = requests.get(ARCHIVE_URL, params=corv_params, timeout=25)
 res_corv.raise_for_status()
 data_corv = res_corv.json()
 
-# 2. Fetch Coast Range archive
-res_west = requests.get(ARCHIVE_URL, params=west_params, timeout=20)
+res_west = requests.get(ARCHIVE_URL, params=west_params, timeout=25)
 res_west.raise_for_status()
 data_west = res_west.json()
 
@@ -79,30 +82,39 @@ for day_idx, s_iso in enumerate(sunsets):
     )
 
     # Cloud cover
-    low = data_corv["hourly"]["cloud_cover_low"][h_idx]
-    mid = data_corv["hourly"]["cloud_cover_mid"][h_idx]
-    high = data_corv["hourly"]["cloud_cover_high"][h_idx]
+    low = int(data_corv["hourly"]["cloud_cover_low"][h_idx] or 0)
+    mid = int(data_corv["hourly"]["cloud_cover_mid"][h_idx] or 0)
+    high = int(data_corv["hourly"]["cloud_cover_high"][h_idx] or 0)
 
     # Moisture and Temperature
-    temp = data_corv["hourly"]["temperature_2m"][h_idx]
-    dew_point = data_corv["hourly"]["dew_point_2m"][h_idx]
+    temp = round(float(data_corv["hourly"]["temperature_2m"][h_idx] or 0.0), 1)
+    dew_point = round(float(data_corv["hourly"]["dew_point_2m"][h_idx] or 0.0), 1)
     dew_point_depression = round(temp - dew_point, 1)
-    humidity = data_corv["hourly"]["relative_humidity_2m"][h_idx]
-    precip = data_corv["hourly"]["precipitation"][h_idx]
+    humidity = int(data_corv["hourly"]["relative_humidity_2m"][h_idx] or 0)
+
+    # Handle potentially null/lagged recent precipitation
+    raw_precip = data_corv["hourly"]["precipitation"][h_idx]
+    precip = round(float(raw_precip), 1) if raw_precip is not None else 0.0
 
     # Solar Radiation (W/m^2)
-    dni = round(data_corv["hourly"]["direct_normal_irradiance"][h_idx], 1)
-    diffuse = round(data_corv["hourly"]["diffuse_radiation"][h_idx], 1)
+    dni = round(float(data_corv["hourly"]["direct_normal_irradiance"][h_idx] or 0.0), 1)
+    diffuse = round(float(data_corv["hourly"]["diffuse_radiation"][h_idx] or 0.0), 1)
 
     # Dynamics
-    pressure = data_corv["hourly"]["surface_pressure"][h_idx]
-    wind_spd = data_corv["hourly"]["wind_speed_10m"][h_idx]
-    wind_dir = data_corv["hourly"]["wind_direction_10m"][h_idx]
+    pressure = round(float(data_corv["hourly"]["surface_pressure"][h_idx] or 0.0), 1)
+    wind_spd = round(float(data_corv["hourly"]["wind_speed_10m"][h_idx] or 0.0), 1)
+    wind_dir = int(data_corv["hourly"]["wind_direction_10m"][h_idx] or 0)
 
     # Western corridor
-    west_low = data_west["hourly"]["cloud_cover_low"][h_idx]
-    west_low_prev = data_west["hourly"]["cloud_cover_low"][h_prev_idx]
+    west_low = int(data_west["hourly"]["cloud_cover_low"][h_idx] or 0)
+    west_low_prev = int(data_west["hourly"]["cloud_cover_low"][h_prev_idx] or 0)
     west_trend = west_low - west_low_prev
+
+    # Visibility (convert meters to km)
+    raw_vis = data_corv["hourly"]["visibility"][h_idx]
+    visibility_km = (
+        round(float(raw_vis) / 1000.0, 1) if raw_vis is not None else 15.0
+    )
 
     # Heuristic scoring (1.0 to 5.0 scale)
     h_score = 1.0
@@ -121,6 +133,11 @@ for day_idx, s_iso in enumerate(sunsets):
         if west_trend < 0:
             h_score += 0.3
     h_score = round(min(5.0, h_score), 1)
+
+    # Preserve recorded manual score, otherwise leave empty string
+    actual_val = score_lookup.get(date_str, "")
+    if pd.isna(actual_val):
+        actual_val = ""
 
     rows.append({
         "date": date_str,
@@ -141,9 +158,10 @@ for day_idx, s_iso in enumerate(sunsets):
         "wind_dir_deg": wind_dir,
         "precipitation_mm": precip,
         "heuristic_score": h_score,
-        "actual_score": score_lookup.get(date_str, ""),
+        "actual_score": actual_val,
+        "visibility_km": visibility_km,
     })
 
 new_df = pd.DataFrame(rows)
 new_df.to_csv(csv_path, index=False)
-print(f"Successfully upgraded {len(rows)} historical days with full radiation & moisture data!")
+print(f"Successfully upgraded {len(rows)} historical days with full radiation, moisture, and visibility data!")
